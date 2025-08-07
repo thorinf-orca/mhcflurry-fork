@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import json
-import os
 
 from flask import Flask, jsonify, request
 
@@ -21,32 +20,26 @@ def predict():
     try:
         data = request.get_json()
 
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
-
-        alleles = data.get("alleles")
-        peptides = data.get("peptides")
-
-        if not alleles or not peptides:
-            return jsonify({"error": "Both 'alleles' and 'peptides' are required"}), 400
-
-        if len(alleles) != len(peptides) and not (
-            len(alleles) == 1 or len(peptides) == 1
-        ):
+        if not data or not isinstance(data, list):
             return jsonify(
                 {
-                    "error": "Alleles and peptides must have same length or one of them must be singular"
+                    "error": "JSON data must be a list of {'allele': ..., 'peptide': ...} dictionaries."
                 }
             ), 400
 
-        if len(alleles) == 1 and len(peptides) == 1:
-            predictions_df = predictor.predict_to_dataframe(
-                peptides=peptides, allele=alleles[0]
-            )
-        else:
-            predictions_df = predictor.predict_to_dataframe(
-                peptides=peptides, alleles=alleles
-            )
+        if not all("allele" in d and "peptide" in d for d in data):
+            return jsonify(
+                {
+                    "error": "Each item in the list must be a dictionary with 'allele' and 'peptide' keys"
+                }
+            ), 400
+
+        peptides = [d["peptide"] for d in data]
+        alleles = [d["allele"] for d in data]
+
+        predictions_df = predictor.predict_to_dataframe(
+            peptides=peptides, alleles=alleles
+        )
 
         result = []
         for i in range(len(predictions_df)):

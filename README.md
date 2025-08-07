@@ -102,17 +102,16 @@ You can also deploy MHCflurry as a REST API server using the provided Dockerfile
 
 ```
 $ docker build -f deploy.Dockerfile -t mhcflurry-api .
-$ docker run -p 5000:5000 mhcflurry-api
+$ docker run -p 1234:5000 mhcflurry-api
 ```
 
-Once running, you can make predictions using:
+Once running, you can make predictions by sending a list of allele-peptide pairs:
 
 ```
-curl -X POST http://localhost:5000/predict \
+curl -X POST http://localhost:1234/predict \
      -H "Content-Type: application/json" \
-     -d '{"alleles": ["HLA-A0201"], "peptides": ["SIINFEKL"]}'
+     -d '[{"allele": "HLA-A0201", "peptide": "SIINFEKL"}, {"allele": "HLA-A0301", "peptide": "SIINFEDK"}]'
 ```
-
 ## Predicted sequence motifs
 
 Sequence logos for the binding motifs learned by MHCflurry BA are available [here](https://openvax.github.io/mhcflurry-motifs/).
