@@ -95,7 +95,26 @@ To build the Docker image yourself, from a checkout run:
 $ docker build -t mhcflurry:latest .
 $ docker run -p 9999:9999 --rm mhcflurry:latest
 ```
+
+## REST API Deployment
+
+You can also deploy MHCflurry as a REST API server using the provided Dockerfile:
+
+```
+$ docker build -f deploy.Dockerfile -t mhcflurry-api .
+$ docker run -p 5000:5000 mhcflurry-api
+```
+
+Once running, you can make predictions using:
+
+```
+curl -X POST http://localhost:5000/predict \
+     -H "Content-Type: application/json" \
+     -d '{"alleles": ["HLA-A0201"], "peptides": ["SIINFEKL"]}'
+```
+
 ## Predicted sequence motifs
+
 Sequence logos for the binding motifs learned by MHCflurry BA are available [here](https://openvax.github.io/mhcflurry-motifs/).
 
 ## Common issues and fixes
