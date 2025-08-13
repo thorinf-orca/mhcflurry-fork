@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import logging
+import os
 
 import tensorflow as tf
 from flask import Flask, jsonify, request
@@ -50,6 +51,18 @@ configure_tensorflow()
 
 app = Flask(__name__)
 
+VALID_AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
+VALID_AMINO_ACIDS_SET = set(VALID_AMINO_ACIDS)
+
+# Configuration from environment variables
+MAX_REQUEST_SIZE = int(
+    os.getenv("MAX_REQUEST_SIZE", "10000")
+)  # Max items in JSON request
+MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "1024"))  # Max items processed at once
+
+logger.info(
+    f"Configuration: MAX_REQUEST_SIZE={MAX_REQUEST_SIZE}, MAX_BATCH_SIZE={MAX_BATCH_SIZE}"
+)
 logger.info("Loading MHCflurry predictor...")
 predictor = Class1AffinityPredictor.load()
 logger.info("MHCflurry predictor loaded successfully")
@@ -103,69 +116,111 @@ def predict():
             logger.warning("Empty list received")
             return jsonify({"error": "List cannot be empty"}), 400
 
-        if len(data) > 1000:
-            logger.warning(f"Large batch size: {len(data)}")
-            return jsonify({"error": "Batch size too large (max 1000)"}), 400
-
-        for i, item in enumerate(data):
-            if not isinstance(item, dict):
-                return jsonify({"error": f"Item {i} must be a dictionary"}), 400
-
-            if "allele" not in item or "peptide" not in item:
-                return jsonify(
-                    {"error": f"Item {i} must contain 'allele' and 'peptide' keys"}
-                ), 400
-
-            if not isinstance(item["allele"], str) or not isinstance(
-                item["peptide"], str
-            ):
-                return jsonify(
-                    {"error": f"Item {i}: 'allele' and 'peptide' must be strings"}
-                ), 400
-
-            if not item["allele"].strip() or not item["peptide"].strip():
-                return jsonify(
-                    {"error": f"Item {i}: 'allele' and 'peptide' cannot be empty"}
-                ), 400
-
-            peptide_len = len(item["peptide"].strip())
-            if peptide_len < 8 or peptide_len > 15:
-                logger.warning(
-                    f"Unusual peptide length {peptide_len} for peptide: {item['peptide']}"
-                )
-
-        peptides = [d["peptide"].strip() for d in data]
-        alleles = [d["allele"].strip() for d in data]
-
-        logger.info(f"Processing {len(peptides)} predictions")
-
-        unsupported_alleles = set(alleles) - set(predictor.supported_alleles)
-        if unsupported_alleles:
+        if len(data) > MAX_REQUEST_SIZE:
+            logger.warning(
+                f"Request too large: {len(data)} items (max {MAX_REQUEST_SIZE})"
+            )
             return jsonify(
-                {
-                    "error": f"Unsupported alleles: {list(unsupported_alleles)}",
-                    "supported_alleles_count": len(predictor.supported_alleles),
-                }
+                {"error": f"Request too large (max {MAX_REQUEST_SIZE} items)"}
             ), 400
 
-        predictions_df = predictor.predict_to_dataframe(
-            peptides=peptides, alleles=alleles
-        )
+        # Process each item and collect valid ones for prediction
+        valid_items = []
+        response_items = []
 
-        result = []
-        for i in range(len(predictions_df)):
-            row = predictions_df.iloc[i]
-            result.append(
-                {
-                    "allele": row["allele"],
-                    "peptide": row["peptide"],
-                    "affinity": float(row["prediction"]),
-                    "percentile": float(row["prediction_percentile"]),
-                }
+        for i, item in enumerate(data):
+            error = None
+
+            if not isinstance(item, dict):
+                error = "Item must be a dictionary"
+            elif "allele" not in item or "peptide" not in item:
+                error = "Item must contain 'allele' and 'peptide' keys"
+            elif not isinstance(item["allele"], str) or not isinstance(
+                item["peptide"], str
+            ):
+                error = "'allele' and 'peptide' must be strings"
+            elif not item["allele"].strip() or not item["peptide"].strip():
+                error = "'allele' and 'peptide' cannot be empty"
+            else:
+                allele = item["allele"].strip()
+                peptide = item["peptide"].strip()
+
+                if allele not in predictor.supported_alleles:
+                    error = f"Unsupported allele: {allele}"
+                elif not all(char in VALID_AMINO_ACIDS_SET for char in peptide.upper()):
+                    invalid_chars = set(peptide.upper()) - VALID_AMINO_ACIDS_SET
+                    error = f"Invalid amino acid characters: {', '.join(sorted(invalid_chars))}"
+                else:
+                    peptide_len = len(peptide)
+                    if peptide_len < 5 or peptide_len > 15:
+                        error = f"Peptide length {peptide_len} outside supported range [5, 15]"
+                    else:
+                        if peptide_len < 8:
+                            logger.warning(
+                                f"Unusual peptide length {peptide_len} for peptide: {peptide}"
+                            )
+
+                        valid_items.append(
+                            {"index": i, "allele": allele, "peptide": peptide}
+                        )
+
+            if error:
+                allele = item.get("allele", "N/A") if isinstance(item, dict) else "N/A"
+                peptide = (
+                    item.get("peptide", "N/A") if isinstance(item, dict) else "N/A"
+                )
+                response_items.append(
+                    {"allele": allele, "peptide": peptide, "error": error}
+                )
+            else:
+                response_items.append(None)  # Placeholder for prediction
+
+        # Run predictions on valid items in chunks
+        if valid_items:
+            logger.info(
+                f"Processing {len(valid_items)} predictions in chunks of {MAX_BATCH_SIZE}, {len(data) - len(valid_items)} invalid items"
             )
 
-        logger.info(f"Successfully processed {len(result)} predictions")
-        return jsonify({"predictions": result, "count": len(result)})
+            # Process valid items in chunks
+            for chunk_start in range(0, len(valid_items), MAX_BATCH_SIZE):
+                chunk_end = min(chunk_start + MAX_BATCH_SIZE, len(valid_items))
+                chunk_items = valid_items[chunk_start:chunk_end]
+
+                peptides = [item["peptide"] for item in chunk_items]
+                alleles = [item["allele"] for item in chunk_items]
+
+                logger.info(
+                    f"Processing chunk {chunk_start // MAX_BATCH_SIZE + 1}: {len(chunk_items)} items"
+                )
+
+                predictions_df = predictor.predict_to_dataframe(
+                    peptides=peptides, alleles=alleles
+                )
+
+                # Fill in predictions for this chunk
+                for i, valid_item in enumerate(chunk_items):
+                    row = predictions_df.iloc[i]
+                    response_items[valid_item["index"]] = {
+                        "allele": row["allele"],
+                        "peptide": row["peptide"],
+                        "affinity": float(row["prediction"]),
+                        "percentile": float(row["prediction_percentile"]),
+                    }
+        else:
+            logger.info(f"No valid items to process, all {len(data)} items invalid")
+
+        valid_count = len(valid_items)
+        total_count = len(data)
+        filtered_count = total_count - valid_count
+
+        return jsonify(
+            {
+                "predictions": response_items,
+                "valid_count": valid_count,
+                "filtered_count": filtered_count,
+                "total_count": total_count,
+            }
+        )
 
     except ValueError as e:
         logger.error(f"Validation error: {e}")

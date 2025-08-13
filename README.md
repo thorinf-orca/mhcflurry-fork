@@ -36,6 +36,8 @@ Have a bugfix or other contribution? We would love your help. See our [contribut
 
 You can generate MHCflurry predictions without any setup by running our Google colaboratory [notebook](https://colab.research.google.com/github/openvax/mhcflurry/blob/master/notebooks/mhcflurry-colab.ipynb).
 
+Test outputs are available in the `test_outputs_raw/` directory.
+
 ## Installation (pip)
 
 Install the package:
@@ -105,16 +107,68 @@ $ docker build -f deploy.Dockerfile -t mhcflurry-api .
 $ docker run -p 1234:5000 mhcflurry-api
 ```
 
-Once running, you can make predictions by sending a list of allele-peptide pairs:
+Once running, you can make predictions by sending a list of allele-peptide pairs. The server will return predictions for valid items and error messages for invalid ones.
 
+Example with both valid and invalid items in a single request:
 ```
+JSON_PAYLOAD='[
+  {"allele": "HLA-A*02:01", "peptide": "SIINFEKL"},
+  {"allele": "HLA-A*03:01", "peptide": "SIINFEKD"},
+  {"allele": "INVALID-ALLELE", "peptide": "SIINFEKD"},
+  {"allele": "HLA-A*02:01", "peptide": "XPEPTIDE"},
+  {"allele": "HLA-A*02:01", "peptide": "SIINFEK"}
+]'
+
 curl -X POST http://localhost:1234/predict \
      -H "Content-Type: application/json" \
-     -d '[{"allele": "HLA-A0201", "peptide": "SIINFEKL"}, {"allele": "HLA-A0301", "peptide": "SIINFEDK"}]'
+     -d "$JSON_PAYLOAD"
+```
+
+Example response:
+```
+{
+  "filtered_count": 3,
+  "predictions": [
+    {
+      "affinity": 11927.156153206837,
+      "allele": "HLA-A*02:01",
+      "peptide": "SIINFEKL",
+      "percentile": 6.296000000000002
+    },
+    {
+      "affinity": 33158.806700844056,
+      "allele": "HLA-A*03:01",
+      "peptide": "SIINFEKD",
+      "percentile": 62.27625
+    },
+    {
+      "allele": "INVALID-ALLELE",
+      "error": "Unsupported allele: INVALID-ALLELE",
+      "peptide": "SIINFEKD"
+    },
+    {
+      "allele": "HLA-A*02:01",
+      "error": "Invalid amino acid characters: X",
+      "peptide": "XPEPTIDE"
+    },
+    {
+      "allele": "HLA-A*02:01",
+      "error": "Peptide length 4 outside supported range [5, 15]",
+      "peptide": "SIIN"
+    }
+  ],
+  "total_count": 5,
+  "valid_count": 2
+}
 ```
 ## Predicted sequence motifs
 
 Sequence logos for the binding motifs learned by MHCflurry BA are available [here](https://openvax.github.io/mhcflurry-motifs/).
+
+You can run the examples using the provided script:
+```
+$ ./run_curl_examples.sh
+```
 
 ## Common issues and fixes
 
